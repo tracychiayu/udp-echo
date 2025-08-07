@@ -45,13 +45,14 @@ int main(int argc, char** argv) {
     socklen_t serversize = sizeof(serveraddr);     // struct size
     int BUFF_SIZES = 1024;
     char recv_buffer[BUFF_SIZES];  // buffer to store messages from the server
-    char send_buffer[BUFF_SIZES];  // Stores message to be sent to the server
+    char send_buffer[BUFF_SIZES];  // stores message to be sent to the server
 
-    // DEBUG
-    const char* test_msg = "hello from client\n";
-    ssize_t sent = sendto(sockfd, test_msg, strlen(test_msg), 0,
-                        (struct sockaddr*)&serveraddr, serversize);
-    fprintf(stderr, "[DEBUG] Sent %zd bytes to server\n", sent);
+    // // DEBUG
+    // const char* test_msg = "hello from client\n";
+    // ssize_t sent = sendto(sockfd, test_msg, strlen(test_msg), 0,
+    //                     (struct sockaddr*)&serveraddr, serversize);
+    // fprintf(stderr, "[DEBUG] Sent %zd bytes to server\n", sent);
+
     // Listen loop
     while(1){
         // A. Receive from socket and write to STDOUT
