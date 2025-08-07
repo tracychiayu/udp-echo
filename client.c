@@ -43,9 +43,9 @@ int main(int argc, char** argv) {
     serveraddr.sin_port = htons(port);             // Little -> Big Endian (network order)
 
     socklen_t serversize = sizeof(serveraddr);     // struct size
-    int BUFF_SIZES = 1024;
-    char recv_buffer[BUFF_SIZES];  // buffer to store messages from the server
-    char send_buffer[BUFF_SIZES];  // stores message to be sent to the server
+    int BUFF_SIZE = 1024;
+    char recv_buffer[BUFF_SIZE];  // buffer to store messages from the server
+    char send_buffer[BUFF_SIZE];  // stores message to be sent to the server
 
     // // DEBUG
     // const char* test_msg = "hello from client\n";
@@ -57,36 +57,33 @@ int main(int argc, char** argv) {
     while(1){
         // A. Receive from socket and write to STDOUT
         struct sockaddr_in recv_addr;
-        socklen_t recv_addrlen = sizeof(recv_addr);     // struct size
-        int bytes_recvd = recvfrom(sockfd, recv_buffer, BUFF_SIZES, 0, (struct sockaddr*)&recv_addr, &recv_addrlen);
+        socklen_t recv_addrlen = sizeof(recv_addr);     
+        int bytes_recvd = recvfrom(sockfd, recv_buffer, BUFF_SIZE, 0, (struct sockaddr*)&recv_addr, &recv_addrlen);
 
-        // TODO: If data, write to stdout
+        // If data is received from the socket, write to STDOUT
         if (bytes_recvd > 0){
-            // fprintf(stderr, "message received");
             fprintf(stderr,"[DEBUG] Received %d bytes from server\n", bytes_recvd);
             write(STDOUT_FILENO, recv_buffer, bytes_recvd);
 
         }
-        else if ( bytes_recvd == -1){ 
-            // No message received from the server yet; continue listening
-            if (errno != EAGAIN && errno != EWOULDBLOCK){  
-                fprintf(stderr, "[ERROR] recvfrom() failed to receive data from server.\n");
-                exit(1);
-            }
+
+        // No message received from the server yet; continue listening
+        else if ( bytes_recvd == -1 && errno != EAGAIN && errno != EWOULDBLOCK){ 
+            fprintf(stderr, "[ERROR] recvfrom() failed to receive data from server.\n");
+            exit(1);
         }
     
         // B. Read from STDIN and send to socket
-        int bytes_read = read(STDIN_FILENO, send_buffer, BUFF_SIZES);
-        // fprintf(stderr, "Number of bytes read from STDIN: %d\n", bytes_read);
+        int bytes_read = read(STDIN_FILENO, send_buffer, BUFF_SIZE);
         
         if (bytes_read > 0){
-
-            // If data is available at STDIN, send to socket
             fprintf(stderr,"[DEBUG] Read %d bytes from STDIN.\n", bytes_read);
-            ssize_t did_sent = sendto(sockfd, send_buffer, bytes_read, 0, (struct sockaddr*) &serveraddr, serversize);
-            fprintf(stderr,"[DEBUG] %zd bytes are sent to server.\n", did_sent);
+            
+            // If data is available at STDIN, send to socket
+            ssize_t did_send = sendto(sockfd, send_buffer, bytes_read, 0, (struct sockaddr*) &serveraddr, serversize);
+            fprintf(stderr,"[DEBUG] %zd bytes are sent to server.\n", did_send);
 
-            if (did_sent < 0){
+            if (did_send < 0){
                 fprintf(stderr, "[ERROR] sendto() failed to send data to server.\n");
                 exit(1);
             }
