@@ -18,7 +18,7 @@ The **server** must be started first:
 The following diagram shows the flow of the client-server communication. Both the client and server run a **loop** (shaded in gray) that interleaves `recvfrom()` (socket input → `STDOUT`) and `sendto()` (`STDIN` → socket output), allowing real-time echoing between endpoints.
 
 <p align="center">
-<img src="UDP_flowchart.png" width="470"/>
+<img src="UDP/UDP_flowchart.png" width="470"/>
 </p>
 
 ## Socket Setup and Non-Blocking I/O
