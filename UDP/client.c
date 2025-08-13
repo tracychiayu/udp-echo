@@ -92,8 +92,6 @@ int main(int argc, char** argv) {
             continue;
         }
 
-        // Pause for 10ms. Avoid 100% CPU usage and allow the system to process I/O
-        usleep(1000000);
     }
 
     close(sockfd);
