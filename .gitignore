@@ -3,6 +3,7 @@ client
 server
 .vscode
 .DS_Store
+*.bin
 TCP/helper
 TCP/LICENSE
 TCP/arch.png
