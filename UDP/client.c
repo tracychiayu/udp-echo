@@ -47,12 +47,6 @@ int main(int argc, char** argv) {
     char recv_buffer[BUFF_SIZE];  // buffer to store messages from the server
     char send_buffer[BUFF_SIZE];  // stores message to be sent to the server
 
-    // // DEBUG
-    // const char* test_msg = "hello from client\n";
-    // ssize_t sent = sendto(sockfd, test_msg, strlen(test_msg), 0,
-    //                     (struct sockaddr*)&serveraddr, serversize);
-    // fprintf(stderr, "[DEBUG] Sent %zd bytes to server\n", sent);
-
     // Listen loop
     while(1){
         // A. Receive from socket and write to STDOUT
@@ -62,7 +56,7 @@ int main(int argc, char** argv) {
 
         // If data is received from the socket, write to STDOUT
         if (bytes_recvd > 0){
-            fprintf(stderr,"[DEBUG] Received %d bytes from server\n", bytes_recvd);
+            // fprintf(stderr,"[DEBUG] Received %d bytes from server\n", bytes_recvd);
             write(STDOUT_FILENO, recv_buffer, bytes_recvd);
 
         }
@@ -77,11 +71,11 @@ int main(int argc, char** argv) {
         int bytes_read = read(STDIN_FILENO, send_buffer, BUFF_SIZE);
         
         if (bytes_read > 0){
-            fprintf(stderr,"[DEBUG] Read %d bytes from STDIN.\n", bytes_read);
+            // fprintf(stderr,"[DEBUG] Read %d bytes from STDIN.\n", bytes_read);
             
             // If data is available at STDIN, send to socket
             ssize_t did_send = sendto(sockfd, send_buffer, bytes_read, 0, (struct sockaddr*) &serveraddr, serversize);
-            fprintf(stderr,"[DEBUG] %zd bytes are sent to server.\n", did_send);
+            // fprintf(stderr,"[DEBUG] %zd bytes are sent to server.\n", did_send);
 
             if (did_send < 0){
                 fprintf(stderr, "[ERROR] sendto() failed to send data to server.\n");

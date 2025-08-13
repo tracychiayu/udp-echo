@@ -65,7 +65,7 @@ int main(int argc, char** argv) {
 
         // If data is received from the socket, client is connected and write data to STDOUT
         if (bytes_recvd > 0){
-            fprintf(stderr,"\n[DEBUG] Received %d bytes from client\n", bytes_recvd);
+            // fprintf(stderr,"\n[DEBUG] Received %d bytes from client\n", bytes_recvd);
             write(STDOUT_FILENO, recv_buffer, bytes_recvd);
             client_connected = 1;    // indicates that we have the address of client
         }
@@ -82,10 +82,10 @@ int main(int argc, char** argv) {
             int bytes_read = read(STDIN_FILENO, send_buffer, BUFF_SIZE); 
 
             if (bytes_read > 0){ 
-                fprintf(stderr,"[DEBUG] Read %d bytes from STDIN.\n", bytes_read); 
+                // fprintf(stderr,"[DEBUG] Read %d bytes from STDIN.\n", bytes_read); 
 
                 ssize_t did_send = sendto(sockfd, send_buffer, bytes_read, 0, (struct sockaddr*) &clientaddr, sizeof(clientaddr));
-                fprintf(stderr,"[DEBUG] %zd bytes are sent to client.\n", did_send);
+                // fprintf(stderr,"[DEBUG] %zd bytes are sent to client.\n", did_send);
 
                 if (did_send < 0){
                     fprintf(stderr, "[ERROR] sendto() failed to send data to client.\n");
