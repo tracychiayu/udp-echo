@@ -9,6 +9,7 @@
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <unistd.h>
+#include <errno.h>
 
 /*
  * the following variables are only informational, 
@@ -27,10 +28,8 @@ uint32_t last_ack = 0;   // Last ACK number to keep track of duplicate ACKs
 bool pure_ack = false;  // Require ACK to be sent out
 packet* base_pkt = NULL; // Lowest outstanding packet to be sent out
 
-buffer_node* recv_buf =
-    NULL; // Linked list storing out of order received packets
-buffer_node* send_buf =
-    NULL; // Linked list storing packets that were sent but not acknowledged
+buffer_node* recv_buf = NULL; // Linked list storing out of order received packets
+buffer_node* send_buf = NULL; // Linked list storing packets that were sent but not acknowledged
 
 ssize_t (*input)(uint8_t*, size_t); // Get data from layer
 void (*output)(uint8_t*, size_t);   // Output data from layer
@@ -38,13 +37,52 @@ void (*output)(uint8_t*, size_t);   // Output data from layer
 struct timeval start; // Last packet sent at this time
 struct timeval now;   // Temp for current time
 
-// Get data from standard input / make handshake packets
+// Get data from standard input
 packet* get_data() {
+
     switch (state) {
     case SERVER_AWAIT:
     case CLIENT_AWAIT:
-    case CLIENT_START:
+    case CLIENT_START: {
+        // Read data from STDIN
+        uint8_t buffer[MAX_PAYLOAD];
+        ssize_t bytes_read = input(buffer, MAX_PAYLOAD);
+
+        // Build a SYN packet for handshake (1)
+        if (bytes_read == 0){ // no payload   
+
+            packet* pkt = calloc(1, sizeof(packet));
+            pkt->seq = htons(seq);
+            pkt->ack = htons(0);
+            pkt->length = htons(0);
+            pkt->win = htons(our_max_receiving_window);
+            pkt->flags = SYN;
+            pkt->unused = htons(0);
+
+            print_diag(pkt, SEND);
+            state = CLIENT_AWAIT;
+            return pkt;
+        }
+        else if (bytes_read > 0){
+
+            our_send_window += bytes_read;
+
+            packet* pkt = calloc(1, sizeof(packet) + bytes_read);
+            pkt->seq = htons(seq);
+            pkt->ack = htons(0);
+            pkt->length = htons(bytes_read);
+            pkt->win = htons(our_max_receiving_window);
+            pkt->flags = SYN;
+            pkt->unused = htons(0);
+            memcpy(pkt->payload, buffer, bytes_read);
+
+            print_diag(pkt, SEND);
+            state = CLIENT_AWAIT;
+            return pkt;
+        }
+    }
     case SERVER_START:
+
     default: {
     }
     }
@@ -83,12 +121,18 @@ void listen_loop(int sockfd, struct sockaddr_in* addr, int initial_state,
     setsockopt(sockfd, SOL_SOCKET, SO_REUSEPORT, &(int) {1}, sizeof(int));
 
     // Set initial sequence number
-    uint32_t r;
-    int rfd = open("/dev/urandom", 'r');
-    read(rfd, &r, sizeof(uint32_t));
-    close(rfd);
-    srand(r);
-    seq = (rand() % 10) * 100 + 100;
+    // uint32_t r;
+    // int rfd = open("/dev/urandom", 'r');
+    // read(rfd, &r, sizeof(uint32_t));
+    // close(rfd);
+    // srand(r);
+    // seq = (rand() % 10) * 100 + 100;
+    if (state == CLIENT_START){
+        seq = 300;
+    }
+    else if (state == SERVER_AWAIT){
+        seq = 500;
+    }
 
     // Setting timers
     gettimeofday(&now, NULL);
@@ -101,21 +145,34 @@ void listen_loop(int sockfd, struct sockaddr_in* addr, int initial_state,
 
     // Start listen loop
     while (true) {
+
         memset(buffer, 0, sizeof(packet) + MAX_PAYLOAD);
-        // Get data from socket
-        int bytes_recvd = recvfrom(sockfd, &buffer, sizeof(buffer), 0,
-                                   (struct sockaddr*) addr, &addr_size);
-        // If data, process it
+
+        // 1. Receive data from socket
+        int bytes_recvd = recvfrom(sockfd, &buffer, sizeof(buffer), 0, (struct sockaddr*) addr, &addr_size);
+
         if (bytes_recvd > 0) {
             print_diag(pkt, RECV);
             recv_data(pkt);
         }
+        // No message received from the server yet; continue listening
+        else if (bytes_recvd == -1 && errno != EAGAIN && errno != EWOULDBLOCK){ 
+            fprintf(stderr, "[ERROR] recvfrom() failed to receive data from server.\n");
+            exit(1);
+        }
 
+        // 2. Generate and send data packet
         packet* tosend = get_data();
         // Data available to send
         if (tosend != NULL) {
+            ssize_t sent_bytes = sendto(sockfd, tosend, sizeof(packet) + ntohs(tosend->length), 0, (struct sockaddr*) addr, sizeof(struct sockaddr_in));
+
+            if (sent_bytes < 0 && errno != EAGAIN && errno != EWOULDBLOCK){
+                perror("sendto");
+                exit(1);
+            }
         }
-        // Received a packet and must send an ACK
+        // Send ACK only packet with no payload (no need to queue in send_buff)
         else if (pure_ack) {
         }
 
