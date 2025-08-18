@@ -26,6 +26,8 @@ uint32_t ack = 0;        // Acknowledgement number
 uint32_t seq = 0;        // Sequence number
 uint32_t last_ack = 0;   // Last ACK number to keep track of duplicate ACKs
 bool pure_ack = false;  // Require ACK to be sent out
+bool syn_sent = false;
+bool syn_ack_received = false;
 packet* base_pkt = NULL; // Lowest outstanding packet to be sent out
 
 buffer_node* recv_buf = NULL; // Linked list storing out of order received packets
@@ -41,16 +43,31 @@ struct timeval now;   // Temp for current time
 packet* get_data() {
 
     switch (state) {
-    case SERVER_AWAIT:
-    case CLIENT_AWAIT:
+    case SERVER_AWAIT: {
+        break;
+    }
+    case CLIENT_AWAIT: {
+        // Build a ACK to reply for server's SYN-ACK for handshake (3)   
+        if (syn_ack_received){
+            packet* pkt = calloc(1, sizeof(packet));
+            pkt->seq = htons(seq);
+            pkt->ack = htons(ack);
+            pkt->length = htons(0);   // has to be modified later if there's STDIN on client's side
+            pkt->win = htons(our_max_receiving_window);  
+            pkt->flags = ACK;
+            pkt->unused = htons(0);
+
+            print_diag(pkt, SEND);
+            state = NORMAL;
+
+            return pkt; 
+        }   
+        break;
+    }
     case CLIENT_START: {
-        // Read data from STDIN
-        uint8_t buffer[MAX_PAYLOAD];
-        ssize_t bytes_read = input(buffer, MAX_PAYLOAD);
 
         // Build a SYN packet for handshake (1)
-        if (bytes_read == 0){ // no payload   
-
+        if (!syn_sent){ // ensure that SYN packet is only sent once
             packet* pkt = calloc(1, sizeof(packet));
             pkt->seq = htons(seq);
             pkt->ack = htons(0);
@@ -61,42 +78,75 @@ packet* get_data() {
 
             print_diag(pkt, SEND);
             state = CLIENT_AWAIT;
+
+            syn_sent = true;
+
             return pkt;
         }
-        else if (bytes_read > 0){
-
-            our_send_window += bytes_read;
-
-            packet* pkt = calloc(1, sizeof(packet) + bytes_read);
-            pkt->seq = htons(seq);
-            pkt->ack = htons(0);
-            pkt->length = htons(bytes_read);
-            pkt->win = htons(our_max_receiving_window);
-            pkt->flags = SYN;
-            pkt->unused = htons(0);
-            memcpy(pkt->payload, buffer, bytes_read);
-
-            print_diag(pkt, SEND);
-            state = CLIENT_AWAIT;
-            return pkt;
-        }
+        break;
     }
-    case SERVER_START:
+    case SERVER_START:{
+
+        // Build a SYN-ACK packet for handshake (2)
+        packet* pkt = calloc(1, sizeof(packet));
+        pkt->seq = htons(seq);
+        pkt->ack = htons(ack);
+        pkt->length = htons(0);
+        pkt->win = htons(our_max_receiving_window);
+        pkt->flags = SYN | ACK;
+        pkt->unused = htons(0);
+
+        print_diag(pkt, SEND);
+        state = SERVER_AWAIT;
+
+        return pkt;
+        break;
+    }
 
     default: {
+        break;
     }
     }
+
+    return NULL;
 }
 
 // Process data received from socket
 void recv_data(packet* pkt) {
+    
     switch (state) {
-    case CLIENT_START:
-    case SERVER_START:
-    case SERVER_AWAIT:
+    case CLIENT_START: {
+        break;
+    }
+    case SERVER_START: {
+        break;
+    }
+    case SERVER_AWAIT:{
+
+        // Receive hanshake SYN from client
+        uint16_t client_seq = ntohs(pkt->seq);
+        ack = client_seq + 1;
+        if (pkt->flags == SYN){ 
+            state = SERVER_START;
+        }
+        else if (pkt->flags == ACK){
+            state = NORMAL;
+        }
+        break;
+    }
     case CLIENT_AWAIT: {
+        if (pkt->flags == (SYN | ACK)){
+            uint16_t server_seq = ntohs(pkt->seq);
+            uint16_t server_ack = ntohs(pkt->ack);
+            seq = server_ack;      // 301
+            ack = server_seq + 1;  // 501
+
+            syn_ack_received = true;
+        }
+        break;
     }
     default: {
+        break;
     }
     }
 }
@@ -105,6 +155,8 @@ void recv_data(packet* pkt) {
 void listen_loop(int sockfd, struct sockaddr_in* addr, int initial_state,
                  ssize_t (*input_p)(uint8_t*, size_t),
                  void (*output_p)(uint8_t*, size_t)) {
+    
+    // fprintf(stderr, "[DEBUG] Enter listen loop...\n");
 
     // Set initial state (whether client or server)
     state = initial_state;
@@ -144,14 +196,18 @@ void listen_loop(int sockfd, struct sockaddr_in* addr, int initial_state,
     socklen_t addr_size = sizeof(struct sockaddr_in);
 
     // Start listen loop
+    int count = 0;
     while (true) {
-
+        count++;
+        // fprintf(stderr, "count: %d\n", count);
         memset(buffer, 0, sizeof(packet) + MAX_PAYLOAD);
 
         // 1. Receive data from socket
         int bytes_recvd = recvfrom(sockfd, &buffer, sizeof(buffer), 0, (struct sockaddr*) addr, &addr_size);
+        // fprintf(stderr, "[DEBUG] Bytes received: %d\n", bytes_recvd);
 
         if (bytes_recvd > 0) {
+            // fprintf(stderr, "[DEBUG] Receiving data from recvfrom()\n");
             print_diag(pkt, RECV);
             recv_data(pkt);
         }
@@ -168,9 +224,10 @@ void listen_loop(int sockfd, struct sockaddr_in* addr, int initial_state,
             ssize_t sent_bytes = sendto(sockfd, tosend, sizeof(packet) + ntohs(tosend->length), 0, (struct sockaddr*) addr, sizeof(struct sockaddr_in));
 
             if (sent_bytes < 0 && errno != EAGAIN && errno != EWOULDBLOCK){
-                perror("sendto");
+                perror("[ERROR] sendto() failed to send data to socket.\n");
                 exit(1);
             }
+            free(tosend);
         }
         // Send ACK only packet with no payload (no need to queue in send_buff)
         else if (pure_ack) {
