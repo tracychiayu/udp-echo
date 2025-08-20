@@ -11,4 +11,4 @@ server: server.o $(DEPS)
 client: client.o $(DEPS)
 
 clean:
-	@rm -rf server client *.bin *.o	
+	@rm -rf server client *.o	
