@@ -34,7 +34,8 @@ int main(int argc, char** argv) {
     char buffer;
 
     // Wait for client connection
-    recvfrom(sockfd, &buffer, sizeof(buffer), MSG_PEEK, (struct sockaddr*) &client_addr, &s);
+    int recv_bytes = recvfrom(sockfd, &buffer, sizeof(buffer), MSG_PEEK, (struct sockaddr*) &client_addr, &s);
+    fprintf(stderr, "Server recv_bytes = %d \n", recv_bytes);
 
     init_io();
     listen_loop(sockfd, &client_addr, SERVER_AWAIT, input_io, output_io);
