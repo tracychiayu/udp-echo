@@ -285,8 +285,8 @@ packet* get_data() {
         if (dup_acks_retransmission){
             // Find pkt in send_buf for retransmission
             packet* pkt = find_pkt_in_send_buf(seq);
-            if (pkt != NULL){
-                // If packet is found in send_buf, retransmit the packet
+            if (pkt == NULL){ return NULL; } // dup-acked packet cannot be found in send_buf, send nothing
+            else{ // If packet is found in send_buf, retransmit the packet
                 pkt->ack = htons(ack);    // modify retransmitted pkt's ack #
 
                 fprintf(stderr,"\nRETRANSMIT packet # %hu\n", ntohs(pkt->seq));
@@ -425,7 +425,7 @@ void recv_data(packet* pkt) {
                 // retreive seq #
                 if (temp_seq != 0){ seq = temp_seq; }
                 dup_acks_retransmission = false; 
-                fprintf(stderr, "dup_acks_retransmission = true\n");
+                fprintf(stderr, "dup_acks_retransmission = false\n");
             }
         }
         
