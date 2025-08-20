@@ -22,11 +22,11 @@
 #define DUP_ACKS 3
 
 // States
-#define SERVER_AWAIT 0
-#define CLIENT_START 1
-#define SERVER_START 2
-#define CLIENT_AWAIT 3
-#define NORMAL 4
+#define SERVER_AWAIT 0    // Server waiting for SYN
+#define CLIENT_START 1    // Client sends SYN
+#define SERVER_START 2    // Server sends SYN-ACK
+#define CLIENT_AWAIT 3    // Client waiting for SYN-ACK and sends ACK
+#define NORMAL 4          // handshake complete
 
 // Flags
 #define SYN 0b001
@@ -46,7 +46,7 @@ typedef struct {
     uint16_t win;
     uint16_t flags; // LSb 0 SYN, LSb 1 ACK
     uint16_t unused;
-    uint8_t payload[0];
+    uint8_t payload[0]; // in raw binary data byte
 } packet;
 
 typedef struct buffer_node {
@@ -92,8 +92,17 @@ static inline void print_diag(packet* pkt, int diag) {
     fprintf(stderr, "\n");
 }
 
-static inline void print_buf(buffer_node* node) {
-    fprintf(stderr, "BUF ");
+static inline void print_buf(buffer_node* node, int diag) {
+    if (diag == SEND){
+        fprintf(stderr, "SEND BUF: ");
+    }
+    else if (diag == RECV){
+        fprintf(stderr, "RECV BUF: ");
+    }
+
+    if (node == NULL){ // empty buffer
+        fprintf(stderr, "(empty)");
+    }
 
     while (node != NULL) {
         fprintf(stderr, "%hu ", htons(node->pkt.seq));
