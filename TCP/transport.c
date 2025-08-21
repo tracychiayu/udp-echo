@@ -25,6 +25,7 @@ bool pure_ack = false;   // Require ACK to be sent out
 bool syn_sent = false;
 bool syn_ack_received = false;
 bool dup_acks_retransmission = false;
+bool drop_packet = false;
 packet* base_pkt = NULL; // Lowest outstanding packet to be sent out
 
 buffer_node* recv_buf = NULL;       // Linked list storing out of order received packets (points to the start of the buffer)
@@ -40,8 +41,12 @@ struct timeval now;   // Temp for current time
 
 // HELPER FUNCTIONS
 void increment_recv_window(){
+    if (our_max_receiving_window == MAX_WINDOW){ return; }
     if (our_max_receiving_window + 500 < MAX_WINDOW){
         our_max_receiving_window += 500;
+    }
+    else{
+        our_max_receiving_window = MAX_WINDOW;
     }
 }
 void insert_send_buffer(packet* pkt){
@@ -147,6 +152,22 @@ packet* find_pkt_in_send_buf(uint16_t seq){
 
     // if pkt is not in send_buf, return NULL
     return NULL;
+}
+
+// Check if a packet with SEQ# seq is in recv buffer
+bool is_in_recv_buf(uint32_t target_seq){
+
+    // Empty buffer
+    if (recv_buf == NULL){ return false; }
+
+    buffer_node* traverse_ptr = recv_buf;
+    uint16_t curr_seq;
+    while (traverse_ptr != NULL){
+        curr_seq = ntohs(traverse_ptr->pkt.seq);
+        if (curr_seq == target_seq){ return true; }
+        traverse_ptr = traverse_ptr->next;
+    }
+    return false;
 }
 
 // Adjust current ACK#: check each packet in recv_buf; 
@@ -281,18 +302,29 @@ packet* get_data() {
         break;
     }
     case NORMAL: {
+
+        drop_packet = false;
         // Retransmit dup-acked packet
         if (dup_acks_retransmission){
-            // Find pkt in send_buf for retransmission
-            packet* pkt = find_pkt_in_send_buf(seq);
-            if (pkt == NULL){ return NULL; } // dup-acked packet cannot be found in send_buf, send nothing
-            else{ // If packet is found in send_buf, retransmit the packet
-                pkt->ack = htons(ack);    // modify retransmitted pkt's ack #
 
-                fprintf(stderr,"\nRETRANSMIT packet # %hu\n", ntohs(pkt->seq));
-            }
+            // Find pkt in send_buf for retransmission
+            packet* original_pkt = find_pkt_in_send_buf(seq);
+            if (original_pkt == NULL){ return NULL; } // dup-acked packet cannot be found in send_buf, send nothing
+
+            // Make a deep copy of original packet
+            int payload_len = ntohs(original_pkt->length);
+            packet* pkt = calloc(1, sizeof(packet) + payload_len);
+            memcpy(pkt, original_pkt, sizeof(packet) + payload_len);
+
+            // Modify ACK before sending
+            pkt->ack = htons(ack);
+            pkt->win = htons(our_max_receiving_window-our_recv_window);  
+
+            fprintf(stderr, "\nRETRANSMIT packet # %hu\n", ntohs(pkt->seq));
             print_diag(pkt, SEND);
             fprintf(stderr, "\n");
+
+            dup_acks_retransmission = false;
             return pkt;
         }
 
@@ -317,16 +349,20 @@ packet* get_data() {
                 insert_send_buffer(pkt);
                 our_send_window += bytes_read;
 
-                // drop pkt
-                // if (seq == 303 || seq == 304 ||seq == 305 || seq == 306 || seq == 307 || seq == 313 || seq == 314){ 
-                //     fprintf(stderr, "Dropping pkt %d\n", seq);
-                //     return NULL; 
-                // } 
+                // DEBUG: drop pkt
+                if (seq == 303 || seq == 307){ 
+                    fprintf(stderr, "Dropping pkt %d\n", seq);
+                    fprintf(stderr, "\n");
+                    drop_packet = true;
+                    return NULL; 
+                } 
 
-                // if (seq == 503 || seq == 504 || seq == 505 || seq == 506 || seq == 507 || seq == 513 || seq == 514 || seq == 517){ 
-                //     fprintf(stderr, "Dropping pkt %d\n", seq);
-                //     return NULL; 
-                // } 
+                if (seq == 506 || seq == 510){ 
+                    fprintf(stderr, "Dropping pkt %d\n", seq);
+                    fprintf(stderr, "\n");
+                    drop_packet = true;
+                    return NULL; 
+                } 
                 
                 print_diag(pkt, SEND);
                 fprintf(stderr, "\n");
@@ -390,15 +426,15 @@ void recv_data(packet* pkt) {
         uint16_t their_ack = ntohs(pkt->ack);
         their_receiving_window = htons(pkt->win);
         
-        // b. Decide if we need to send a pure ack packet when there's no input later
-        // c. Place new packet into recv buffer
+        // a. Decide if we need to send a pure ack packet when there's no input later
+        // b. Place new packet into recv buffer
         if (their_seq >= ack){ 
             pure_ack = true; 
             insert_recv_buffer(pkt);
             print_buf(recv_buf, RECV);
         }
 
-        // a. Update ACK# for outgoing packet
+        // c. Update ACK# for outgoing packet
         if (their_seq == ack){ // we receive what we want
             ack = their_seq + 1;
         }
@@ -412,6 +448,8 @@ void recv_data(packet* pkt) {
 
 
         // d. Check if we need to retransmit a dup-acked packet. Update/reset SEQ# for outgoing packet if needed
+        fprintf(stderr, "their_ack: %u\n", their_ack);
+        fprintf(stderr, "last_ack: %u\n", last_ack);
         if (their_ack == last_ack){ // Receive dup ack
             dup_acks++;
             fprintf(stderr, "[DEBUG] their_ack == last_ack, dup_acks = %d\n", dup_acks);
@@ -439,6 +477,8 @@ void recv_data(packet* pkt) {
         // f. Linear scan recv_buf and write out acked packets
         output_recv_buffer();
         // adjust_ack();
+        last_ack = their_ack;
+
 
         break;
     }
@@ -524,7 +564,7 @@ void listen_loop(int sockfd, struct sockaddr_in* addr, int initial_state,
             free(tosend);
         }
         // Send ACK only packet with no payload (no need to queue in send_buff)
-        else if (pure_ack) {
+        else if (pure_ack && !drop_packet) {
             packet* pure_ack_pkt = generate_pure_ack_packet();
             ssize_t sent_bytes = sendto(sockfd, pure_ack_pkt, sizeof(packet), 0, (struct sockaddr*) addr, sizeof(struct sockaddr_in));
             if (sent_bytes < 0 && errno != EAGAIN && errno != EWOULDBLOCK){
@@ -534,5 +574,6 @@ void listen_loop(int sockfd, struct sockaddr_in* addr, int initial_state,
             free(pure_ack_pkt);
             pure_ack = false;
         }
+        usleep(10000);
     }
 }
