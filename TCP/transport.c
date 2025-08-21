@@ -320,11 +320,14 @@ packet* get_data() {
             pkt->ack = htons(ack);
             pkt->win = htons(our_max_receiving_window-our_recv_window);  
 
-            fprintf(stderr, "\nRETRANSMIT packet # %hu\n", ntohs(pkt->seq));
+            fprintf(stderr, "\nFAST RETRANSMIT packet # %hu\n", ntohs(pkt->seq));
             print_diag(pkt, SEND);
             fprintf(stderr, "\n");
 
-            dup_acks_retransmission = false;
+            if (temp_seq != 0){ seq = temp_seq; }
+            dup_acks_retransmission = false; 
+            dup_acks = 0;  // reset
+
             return pkt;
         }
 
@@ -437,6 +440,9 @@ void recv_data(packet* pkt) {
         // c. Update ACK# for outgoing packet
         if (their_seq == ack){ // we receive what we want
             ack = their_seq + 1;
+            if (is_in_recv_buf(ack)){
+                adjust_ack();
+            }
         }
         else if (their_seq < ack && their_seq != 0){
             // We do not need to process the received packet if its an old packet that we've already acked before
@@ -453,24 +459,18 @@ void recv_data(packet* pkt) {
         if (their_ack == last_ack){ // Receive dup ack
             dup_acks++;
             fprintf(stderr, "[DEBUG] their_ack == last_ack, dup_acks = %d\n", dup_acks);
-            if (dup_acks % DUP_ACKS == 0){ 
+            if (dup_acks == DUP_ACKS){ 
                 temp_seq = seq;
                 seq = their_ack;
                 dup_acks_retransmission = true; 
                 fprintf(stderr, "dup_acks_retransmission = true\n");
             }
-            else{ 
-                // retreive seq #
-                if (temp_seq != 0){ seq = temp_seq; }
-                dup_acks_retransmission = false; 
-                fprintf(stderr, "dup_acks_retransmission = false\n");
-            }
         }
         
         // e. If ACK flag is set, remove packets with SEQ# < received ACK# from send_buf 
         if (pkt->flags == ACK){
-            remove_packets_from_send_buffer(their_ack);
             fprintf(stderr, "[DEBUG] Remove packets with SEQ# < their_ack (%u):\n", their_ack);
+            remove_packets_from_send_buffer(their_ack);
             print_buf(send_buf, SEND);
         }
 
@@ -478,7 +478,7 @@ void recv_data(packet* pkt) {
         output_recv_buffer();
         // adjust_ack();
         last_ack = their_ack;
-
+        fprintf(stderr, "last ack (at the end): %u\n", last_ack);
 
         break;
     }
@@ -509,6 +509,11 @@ void listen_loop(int sockfd, struct sockaddr_in* addr, int initial_state,
     setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &(int) {1}, sizeof(int));
     setsockopt(sockfd, SOL_SOCKET, SO_REUSEPORT, &(int) {1}, sizeof(int));
 
+    struct timeval last_activity;
+    struct timeval start;
+    gettimeofday(&last_activity, NULL);
+    gettimeofday(&start, NULL);
+
     // Set initial sequence number
     // uint32_t r;
     // int rfd = open("/dev/urandom", 'r');
@@ -529,10 +534,8 @@ void listen_loop(int sockfd, struct sockaddr_in* addr, int initial_state,
     socklen_t addr_size = sizeof(struct sockaddr_in);
 
     // Start listen loop
-    int count = 0;
     while (true) {
-        count++;
-        // fprintf(stderr, "count: %d\n", count);
+        
         memset(buffer, 0, sizeof(packet) + MAX_PAYLOAD);
 
         // 1. Receive data from socket
@@ -544,6 +547,7 @@ void listen_loop(int sockfd, struct sockaddr_in* addr, int initial_state,
             print_diag(pkt, RECV);
             fprintf(stderr, "\n");
             recv_data(pkt);
+            gettimeofday(&last_activity, NULL);
         }
         // No message received from the server yet; continue listening
         else if (bytes_recvd == -1 && errno != EAGAIN && errno != EWOULDBLOCK){ 
@@ -553,7 +557,7 @@ void listen_loop(int sockfd, struct sockaddr_in* addr, int initial_state,
 
         // 2. Generate and send data packet
         packet* tosend = get_data();
-        // Data available to send
+        // a. Send packet with payload when data is available at STDIN
         if (tosend != NULL) {
             ssize_t sent_bytes = sendto(sockfd, tosend, sizeof(packet) + ntohs(tosend->length), 0, (struct sockaddr*) addr, sizeof(struct sockaddr_in));
 
@@ -562,8 +566,9 @@ void listen_loop(int sockfd, struct sockaddr_in* addr, int initial_state,
                 exit(1);
             }
             free(tosend);
+            gettimeofday(&last_activity, NULL);
         }
-        // Send ACK only packet with no payload (no need to queue in send_buff)
+        // b. Send pure ACK packet when no data is available at STDIN
         else if (pure_ack && !drop_packet) {
             packet* pure_ack_pkt = generate_pure_ack_packet();
             ssize_t sent_bytes = sendto(sockfd, pure_ack_pkt, sizeof(packet), 0, (struct sockaddr*) addr, sizeof(struct sockaddr_in));
@@ -573,7 +578,53 @@ void listen_loop(int sockfd, struct sockaddr_in* addr, int initial_state,
             }
             free(pure_ack_pkt);
             pure_ack = false;
+            gettimeofday(&last_activity, NULL);
         }
+        // c. Retransmit remaining packets in send_buf (packets sent out but haven't received ACK from the other end)
+        else if (send_buf != NULL){
+            gettimeofday(&now, NULL);
+            if (TV_DIFF(now, last_activity) > 1000000){  // Ensures that we only retransmit after 1 sec of inactivity
+                // Retransmit the first packet in send_buf
+                packet* original_pkt = &send_buf->pkt;
+
+                // Make a deep copy of original packet
+                int payload_len = ntohs(original_pkt->length);
+                packet* pkt = calloc(1, sizeof(packet) + payload_len);
+                memcpy(pkt, original_pkt, sizeof(packet) + payload_len);
+
+                // Modify ACK before sending
+                pkt->ack = htons(ack);
+                pkt->win = htons(our_max_receiving_window-our_recv_window);  
+
+                ssize_t sent_bytes = sendto(sockfd, pkt, sizeof(packet) + ntohs(pkt->length), 0, (struct sockaddr*) addr, sizeof(struct sockaddr_in));
+                if (sent_bytes < 0 && errno != EAGAIN && errno != EWOULDBLOCK){
+                    perror("[ERROR] sendto() failed to send data to socket.\n");
+                    exit(1);
+                }
+
+                fprintf(stderr, "\nRETRANSMIT packet # %hu to clear up send buffer\n", ntohs(pkt->seq));
+                print_diag(pkt, SEND);
+                fprintf(stderr, "\n");
+
+                free(pkt);
+                gettimeofday(&last_activity, NULL);
+            }
+        }
+        // d. Linear scan recv_buf and write out acked packets
+        else if (recv_buf != NULL){
+            output_recv_buffer();
+        }
+        // e. When there's neither input from the socket nor any outgoing packet to send,
+        //    we wait for 4 seconds of inactivity before closing the connection,  
+        //    to allow time for potential retransmissions or delayed packets to arrive.
+        else {
+            gettimeofday(&now, NULL);
+            if (TV_DIFF(now, last_activity) > 4000000) {  // 4 seconds
+                fprintf(stderr, "[INFO] Idle timeout reached. Exiting.\n");
+                break;
+            }
+        }
+
         usleep(10000);
     }
 }
