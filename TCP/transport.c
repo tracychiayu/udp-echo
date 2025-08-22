@@ -203,8 +203,8 @@ void output_recv_buffer(){
         if (curr_seq < ack){
             uint payload_len = ntohs(recv_buf->pkt.length);
             // output(recv_buf->pkt.payload, payload_len);
-            fprintf(stderr,"[DEBUG] Output recv buffer with SEQ# %u\n", ntohs(recv_buf->pkt.seq));
-            fprintf(stderr, "\n");
+            fprintf(stderr,"[DEBUG] Output RECV BUF with SEQ# %u\n", ntohs(recv_buf->pkt.seq));
+            print_buf(recv_buf, RECV);
 
             buffer_node* temp = recv_buf;
             recv_buf = recv_buf->next;
@@ -367,10 +367,9 @@ packet* get_data() {
                     return NULL; 
                 } 
                 
+                fprintf(stderr, "\n");
                 print_diag(pkt, SEND);
-                fprintf(stderr, "\n");
                 print_buf(send_buf,SEND);
-                fprintf(stderr, "\n");
 
                 return pkt;
             }
@@ -454,8 +453,8 @@ void recv_data(packet* pkt) {
 
 
         // d. Check if we need to retransmit a dup-acked packet. Update/reset SEQ# for outgoing packet if needed
-        fprintf(stderr, "their_ack: %u\n", their_ack);
-        fprintf(stderr, "last_ack: %u\n", last_ack);
+        // fprintf(stderr, "their_ack: %u\n", their_ack);
+        // fprintf(stderr, "last_ack: %u\n", last_ack);
         if (their_ack == last_ack){ // Receive dup ack
             dup_acks++;
             fprintf(stderr, "[DEBUG] their_ack == last_ack, dup_acks = %d\n", dup_acks);
@@ -469,8 +468,9 @@ void recv_data(packet* pkt) {
         
         // e. If ACK flag is set, remove packets with SEQ# < received ACK# from send_buf 
         if (pkt->flags == ACK){
-            fprintf(stderr, "[DEBUG] Remove packets with SEQ# < their_ack (%u):\n", their_ack);
+            // fprintf(stderr, "[DEBUG] Remove packets with SEQ# < their_ack (%u):\n", their_ack);
             remove_packets_from_send_buffer(their_ack);
+            fprintf(stderr, "[DEBUG] Remove packets with SEQ# < %d.\n", their_ack);
             print_buf(send_buf, SEND);
         }
 
@@ -478,7 +478,7 @@ void recv_data(packet* pkt) {
         output_recv_buffer();
         // adjust_ack();
         last_ack = their_ack;
-        fprintf(stderr, "last ack (at the end): %u\n", last_ack);
+        // fprintf(stderr, "last ack (at the end): %u\n", last_ack);
 
         break;
     }
