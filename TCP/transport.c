@@ -468,9 +468,8 @@ void recv_data(packet* pkt) {
         
         // e. If ACK flag is set, remove packets with SEQ# < received ACK# from send_buf 
         if (pkt->flags == ACK){
-            // fprintf(stderr, "[DEBUG] Remove packets with SEQ# < their_ack (%u):\n", their_ack);
-            remove_packets_from_send_buffer(their_ack);
             fprintf(stderr, "[DEBUG] Remove packets with SEQ# < %d.\n", their_ack);
+            remove_packets_from_send_buffer(their_ack);
             print_buf(send_buf, SEND);
         }
 
