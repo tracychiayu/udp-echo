@@ -331,8 +331,8 @@ packet* get_data() {
             return pkt;
         }
 
-        // Read data from STDIN only when receiver's window size is greater than MAX_PAYLOAD
-        if (their_receiving_window >= MAX_PAYLOAD){
+        // Read data from STDIN only when receiver's window size is greater than our unACKed bytes
+        if (their_receiving_window >= our_send_window){
             uint8_t buffer[MAX_PAYLOAD];
             ssize_t bytes_read = input(buffer, MAX_PAYLOAD);
             if (bytes_read == 0){ return NULL; }  // return NULL packet if we have no data (from STDIN) to send yet
@@ -440,7 +440,10 @@ void recv_data(packet* pkt) {
         if (their_seq == ack){ // we receive what we want
             ack = their_seq + 1;
             if (is_in_recv_buf(ack)){
+                fprintf(stderr, "ack (before): %u\n", ack);
+                fprintf(stderr, "adjust ack\n");
                 adjust_ack();
+                fprintf(stderr, "ack (after): %u\n", ack);
             }
         }
         else if (their_seq < ack && their_seq != 0){
@@ -475,7 +478,6 @@ void recv_data(packet* pkt) {
 
         // f. Linear scan recv_buf and write out acked packets
         output_recv_buffer();
-        // adjust_ack();
         last_ack = their_ack;
         // fprintf(stderr, "last ack (at the end): %u\n", last_ack);
 
